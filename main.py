@@ -6,7 +6,7 @@ import asyncio
 
 app = FastAPI()
 
-# Frontend Route - Taki 404 Not Found na aaye
+# Frontend Route
 @app.get("/", response_class=HTMLResponse)
 def serve_html():
     html_content = """
@@ -33,7 +33,118 @@ def serve_html():
                 <button onclick="fetchData()">Extract</button>
             </div>
             <h4 style="margin-top: 20px; color: #ffc107;">Response Data:</h4>
-            <p style="font-size: 12px; color: #aaa;">Status: Backend browser run kar raha hai. 30-45 seconds lag sakte hain...</p>
+            <p style="font-size: 12px; color: #aaa;">Status: Browser is running in low-memory mode. Please wait...</p>
+            <pre id="output">Waiting for request...</pre>
+        </div>
+
+        <script>
+            async function fetchData() {
+                const id = document.getElementById("tmdb_id").value;
+                const output = document.getElementById("output");
+                
+                if(!id) {
+                    output.innerText = "Error: Please enter a valid TMDB ID!";
+                    return;
+                }
+
+                output.innerText = "Connecting to Cloud Server... Please wait...";
+
+                try {
+                    const response = await fetch(`/extract/${id}`);
+                    // Agar server HTML bhejta hai (crash hota hai), toh catch block pakad lega
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    const data = await response.json();
+                    output.innerText = JSON.stringify(data, null, 4);
+                } catch (error) {
+                    output.innerText = "Error fetching data: Server may have crashed (Out of Memory). " + error;
+                }
+            }
+        </script>
+    </body>
+    </html>
+    """
+    return html_content
+
+# Backend Route - Optimized for 512MB RAM
+@app.get("/extract/{tmdb_id}")
+async def extract_vidsrc(tmdb_id: str):
+    target_url = f"https://web.nxsha.app/embed/movie/{tmdb_id}?server=AwsPly-[Multi-Lang]"
+    
+    extracted_urls = {
+        "m3u8_links": [],
+        "ts_chunks": []
+    }
+
+    async with async_playwright() as p:
+        # Extra flags lagaye hain RAM bachane ke liye (--single-process, --no-zygote)
+        browser = await p.chromium.launch(
+            headless=True, 
+            args=[
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-dev-shm-usage',
+                '--single-process',
+                '--no-zygote',
+                '--disable-gpu'
+            ]
+        )
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            referer="https://vidsrc.sbs/"
+        )
+        page = await context.new_page()
+
+        # RAM Bachane ka sabse bada step: Faltu cheezein load hi mat hone do
+        async def block_resources(route):
+            if route.request.resource_type in ["image", "stylesheet", "font", "media"]:
+                await route.abort()
+            else:
+                await route.continue_()
+        
+        await page.route("**/*", block_resources)
+
+        async def handle_request(request):
+            url = request.url
+            if ".m3u8" in url or "/getm3u8/" in url or "/stream/" in url:
+                if url not in extracted_urls["m3u8_links"]:
+                    extracted_urls["m3u8_links"].append(url)
+            elif ".ts" in url or ".png" in url and "id=" in url:
+                if url not in extracted_urls["ts_chunks"]:
+                    extracted_urls["ts_chunks"].append(url)
+
+        page.on("request", handle_request)
+
+        try:
+            # Timeout kam karke 45s kiya hai
+            await page.goto(target_url, timeout=45000)
+            await asyncio.sleep(3)
+            
+            await page.mouse.click(x=300, y=200)
+            await asyncio.sleep(1)
+            await page.mouse.click(x=300, y=200)
+            
+            await asyncio.sleep(8)
+            
+        except Exception as e:
+            return {"status": "error", "message": f"Execution error: {str(e)}"}
+        finally:
+            await browser.close()
+
+    if len(extracted_urls["m3u8_links"]) > 0:
+        return {
+            "status": "success",
+            "tmdb_id": tmdb_id,
+            "message": "Play button clicked and network intercepted successfully!",
+            "data": extracted_urls
+        }
+    else:
+        return {
+            "status": "failed",
+            "message": "Network tab par m3u8 link nahi mila. Server timeout ya block ho sakta hai.",
+            "data": extracted_urls
+        }
             <pre id="output">Waiting for request...</pre>
         </div>
 
