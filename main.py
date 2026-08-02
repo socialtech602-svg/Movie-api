@@ -2,9 +2,13 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import requests
-from bs4 import BeautifulSoup # Nayi library add ki
+from bs4 import BeautifulSoup
+import re
 
 app = FastAPI()
+
+# Tumhara ScraperAPI Key
+SCRAPER_API_KEY = "660dc9f273c6860ca54be75cd9902b7a"
 
 @app.get("/", response_class=HTMLResponse)
 def serve_html():
@@ -14,24 +18,25 @@ def serve_html():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Vidsrc Extractor Tester</title>
+        <title>Vidsrc Deep Extractor (Enhanced)</title>
         <style>
             body { font-family: Arial, sans-serif; background-color: #1e1e1e; color: #fff; padding: 20px; }
-            .container { max-width: 600px; margin: 0 auto; background: #2d2d2d; padding: 20px; border-radius: 8px; }
-            input { padding: 10px; width: 70%; border: none; border-radius: 4px; outline: none; }
-            button { padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
-            button:hover { background: #0056b3; }
-            pre { background: #111; padding: 15px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; color: #00ff00; }
+            .container { max-width: 650px; margin: 0 auto; background: #2d2d2d; padding: 20px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+            input { padding: 10px; width: 65%; border: none; border-radius: 4px; outline: none; background: #333; color: white; border: 1px solid #555; }
+            button { padding: 10px 15px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+            button:hover { background: #218838; }
+            pre { background: #111; padding: 15px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; color: #00ff00; border: 1px solid #444; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h2>Vidsrc Extractor API Test</h2>
+            <h2>Vidsrc Deep Extractor API</h2>
             <div style="display: flex; gap: 10px;">
-                <input type="text" id="tmdb_id" placeholder="TMDB ID Daalo (e.g., 969681)">
-                <button onclick="fetchData()">Extract</button>
+                <input type="text" id="tmdb_id" placeholder="Enter TMDB ID (e.g., 969680)">
+                <button onclick="fetchData()">Start Extraction</button>
             </div>
-            <h4 style="margin-top: 20px;">Response Data:</h4>
+            <h4 style="margin-top: 20px; color: #ffc107;">Response Data:</h4>
+            <p style="font-size: 12px; color: #aaa;">Status: JS render ho raha hai... Isme 30 se 60 seconds lag sakte hain.</p>
             <pre id="output">Waiting for request...</pre>
         </div>
 
@@ -41,11 +46,11 @@ def serve_html():
                 const output = document.getElementById("output");
                 
                 if(!id) {
-                    output.innerText = "Please enter TMDB ID!";
+                    output.innerText = "Error: Please enter a valid TMDB ID!";
                     return;
                 }
 
-                output.innerText = "Extracting data from server... Please wait.";
+                output.innerText = "Scanning... Deep extraction in progress via ScraperAPI. Please wait...";
 
                 try {
                     const response = await fetch(`/extract/${id}`);
@@ -63,34 +68,51 @@ def serve_html():
 
 @app.get("/extract/{tmdb_id}")
 def extract_vidsrc(tmdb_id: str):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://vidsrc.sbs/",
-        "Accept-Language": "en-US,en;q=0.9"
+    target_url = f"https://vidsrc.sbs/embed/movie/{tmdb_id}"
+    
+    # ScraperAPI Parameters (JS render on, aur original headers maintain rakhne ke liye)
+    payload = {
+        'api_key': SCRAPER_API_KEY,
+        'url': target_url,
+        'render': 'true',
+        'keep_headers': 'true' # Yeh Vidsrc ko dikhayega ki hum direct wahi se aaye hain
     }
     
-    embed_url = f"https://vidsrc.sbs/embed/movie/{tmdb_id}"
-    
     try:
-        res = requests.get(embed_url, headers=headers, timeout=10)
+        # Timeout badha kar 60 seconds kar diya hai
+        res = requests.get('http://api.scraperapi.com/', params=payload, timeout=60)
         
         if res.status_code == 200:
-            # BeautifulSoup se HTML parse kar rahe hain
             soup = BeautifulSoup(res.text, "html.parser")
             
-            # Page mein jitne bhi iframes hain unka src nikal rahe hain
+            # 1. Normal Iframes Scan
             iframes = [iframe.get('src') for iframe in soup.find_all('iframe') if iframe.get('src')]
+            
+            # 2. Deep Script Scan (Agar link JS ke andar chhipa ho)
+            scripts = soup.find_all('script')
+            hidden_urls = []
+            for script in scripts:
+                if script.string:
+                    # Regex use karke scripts ke andar se URLs nikal rahe hain
+                    urls = re.findall(r'(https?://[^\s"\',]+)', script.string)
+                    for url in urls:
+                        if 'vidsrc' in url or 'lizer' in url or 'embed' in url:
+                            hidden_urls.append(url)
             
             return {
                 "status": "success",
                 "tmdb_id": tmdb_id,
-                "found_iframes": iframes, # Yahan hume player ka link milega
-                "message": "HTML parsed successfully!"
+                "message": "Enhanced Deep Scan completed via ScraperAPI!",
+                "data_found": {
+                    "direct_iframes": iframes,
+                    "hidden_script_urls": list(set(hidden_urls)) # Duplicate links hata diye hain
+                }
             }
         else:
             return {
                 "status": "failed", 
-                "error": f"Server ne HTTP {res.status_code} return kiya"
+                "error": f"ScraperAPI returned HTTP {res.status_code}",
+                "details": res.text[:200]
             }
             
     except Exception as e:
