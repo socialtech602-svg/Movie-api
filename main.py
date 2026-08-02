@@ -2,10 +2,10 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import requests
+from bs4 import BeautifulSoup # Nayi library add ki
 
 app = FastAPI()
 
-# Yeh route frontend (HTML) serve karega
 @app.get("/", response_class=HTMLResponse)
 def serve_html():
     html_content = """
@@ -28,7 +28,7 @@ def serve_html():
         <div class="container">
             <h2>Vidsrc Extractor API Test</h2>
             <div style="display: flex; gap: 10px;">
-                <input type="text" id="tmdb_id" placeholder="TMDB ID Daalo (e.g., 550)">
+                <input type="text" id="tmdb_id" placeholder="TMDB ID Daalo (e.g., 969681)">
                 <button onclick="fetchData()">Extract</button>
             </div>
             <h4 style="margin-top: 20px;">Response Data:</h4>
@@ -50,7 +50,6 @@ def serve_html():
                 try {
                     const response = await fetch(`/extract/${id}`);
                     const data = await response.json();
-                    // Response ko sundar JSON format mein dikhane ke liye
                     output.innerText = JSON.stringify(data, null, 4);
                 } catch (error) {
                     output.innerText = "Error fetching data: " + error;
@@ -62,7 +61,6 @@ def serve_html():
     """
     return html_content
 
-# Yeh route backend extraction ka kaam karega
 @app.get("/extract/{tmdb_id}")
 def extract_vidsrc(tmdb_id: str):
     headers = {
@@ -77,13 +75,17 @@ def extract_vidsrc(tmdb_id: str):
         res = requests.get(embed_url, headers=headers, timeout=10)
         
         if res.status_code == 200:
+            # BeautifulSoup se HTML parse kar rahe hain
+            soup = BeautifulSoup(res.text, "html.parser")
+            
+            # Page mein jitne bhi iframes hain unka src nikal rahe hain
+            iframes = [iframe.get('src') for iframe in soup.find_all('iframe') if iframe.get('src')]
+            
             return {
                 "status": "success",
                 "tmdb_id": tmdb_id,
-                "target_url": embed_url,
-                "message": "Connection successful!",
-                # Testing ke liye HTML ka pehla 500 character bhej rahe hain taaki screen pe dikh jaye
-                "html_preview": res.text[:500] 
+                "found_iframes": iframes, # Yahan hume player ka link milega
+                "message": "HTML parsed successfully!"
             }
         else:
             return {
@@ -94,7 +96,5 @@ def extract_vidsrc(tmdb_id: str):
     except Exception as e:
         return {"status": "error", "detail": str(e)}
 
-# Single file execution block
 if __name__ == "__main__":
-    # Reload true rakha hai taaki code change karte hi server auto-restart ho jaye
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
